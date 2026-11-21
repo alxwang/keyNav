@@ -21,6 +21,8 @@ final class ModeCoordinator {
     private var windowFrames: [String: CGRect] = [:]
     /// After a macOS screenshot shortcut, clicks (area selection, the ⌘⇧5 toolbar) don't close the labels.
     private var screenshotGraceUntil = Date.distantPast
+    /// ⌘⇧4 / ⌘⇧6 finish with a mouse release; ⌘⇧5 needs several clicks, so it only times out.
+    private var screenshotEndsOnMouseUp = false
     private static let screenshotGrace: TimeInterval = 20
     /// Key codes of 3, 4, 5, 6: ⌘⇧3 / ⌘⇧4 / ⌘⇧5 / ⌘⇧6 (with or without ⌃).
     private static let screenshotKeys: Set<UInt16> = [20, 21, 23, 22]
@@ -48,6 +50,12 @@ final class ModeCoordinator {
             if code == KeyLayout.space { self?.overlay.setPeek(false) }
         }
         router.onMouseDown = { [weak self] type, button in self?.handleMouseDown(type: type, button: button) ?? false }
+        router.onLeftMouseUp = { [weak self] in
+            guard let self, self.screenshotEndsOnMouseUp, Date() < self.screenshotGraceUntil else { return }
+            // Area / window captured: give the keyboard back to the labels.
+            self.screenshotGraceUntil = .distantPast
+            self.screenshotEndsOnMouseUp = false
+        }
         router.onScroll = { [weak self] steps in self?.handleScroll(steps) ?? false }
     }
 
@@ -292,17 +300,24 @@ final class ModeCoordinator {
         guard mode != .idle else { return false }
         // macOS screenshot shortcuts go through and leave the labels up, so they can be captured.
         if flags.contains([.maskCommand, .maskShift]), Self.screenshotKeys.contains(code) {
-            screenshotGraceUntil = Date().addingTimeInterval(Self.screenshotGrace)
+            switch code {
+            case 20:  // ⌘⇧3 captures immediately
+                screenshotGraceUntil = .distantPast
+            case 23:  // ⌘⇧5 toolbar
+                screenshotGraceUntil = Date().addingTimeInterval(Self.screenshotGrace)
+                screenshotEndsOnMouseUp = false
+            default:  // ⌘⇧4, ⌘⇧6
+                screenshotGraceUntil = Date().addingTimeInterval(Self.screenshotGrace)
+                screenshotEndsOnMouseUp = true
+            }
             return false
         }
-        if code == KeyLayout.escape {
-            if Date() < screenshotGraceUntil {
-                screenshotGraceUntil = .distantPast   // first Esc cancels the screenshot, the next one the labels
-                return false
-            }
-            cancel()
-            return true
+        if Date() < screenshotGraceUntil {
+            // The screenshot UI owns the keyboard (Space = window capture, Esc = cancel, …).
+            if code == KeyLayout.escape { screenshotGraceUntil = .distantPast }  // next Esc closes the labels
+            return false
         }
+        if code == KeyLayout.escape { cancel(); return true }
         if mode == .windows, code == KeyLayout.returnKey || code == KeyLayout.keypadEnter,
            let label = highlighted, let target = targets[label] {
             fire(target, flags: [])

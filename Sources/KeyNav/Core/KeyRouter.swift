@@ -16,6 +16,8 @@ final class KeyRouter {
     /// Called for each mouse-down while a mode is active (type, button number). Return true to swallow
     /// the click (and its mouse-up); it must be quick, so defer real work.
     var onMouseDown: ((_ type: CGEventType, _ button: Int64) -> Bool)?
+    /// Called when the left button is released while a mode is active (never swallowed).
+    var onLeftMouseUp: (() -> Void)?
     /// Called for scroll-wheel events while a mode is active with whole steps (positive = toward the
     /// user / down, negative = up; 0 for events that don't complete a step). Return true to swallow.
     var onScroll: ((_ steps: Int) -> Bool)?
@@ -52,7 +54,7 @@ final class KeyRouter {
         if tap == nil {
             let types: [CGEventType] = [
                 .keyDown, .keyUp, .flagsChanged, .scrollWheel,
-                .leftMouseDown, .rightMouseDown, .otherMouseDown, .otherMouseUp, .otherMouseDragged,
+                .leftMouseDown, .rightMouseDown, .otherMouseDown, .otherMouseUp, .otherMouseDragged, .leftMouseUp,
             ]
             let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
             guard let port = CGEvent.tapCreate(
@@ -172,6 +174,10 @@ final class KeyRouter {
             let swallow = onMouseDown?(type, button) ?? false
             if swallow { swallowedMouseUps.insert(button) }
             return swallow
+
+        case .leftMouseUp:
+            if isActive { onLeftMouseUp?() }
+            return false
 
         case .otherMouseUp:
             let button = event.getIntegerValueField(.mouseEventButtonNumber)
