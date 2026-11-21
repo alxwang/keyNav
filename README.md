@@ -11,6 +11,9 @@ KeyNav is a small menu bar app. Press a shortcut and every window on the current
 - **Element mode** (default `⌥F`)
   - Labels buttons, links, text fields, checkboxes, tabs, list rows and more in the frontmost window.
   - Typing a label clicks that control. Text fields get keyboard focus instead.
+- **Mouse control**
+  - Hold the middle button to open the window picker.
+  - Scroll to highlight a window, then middle-click to switch to it, all without touching the keyboard.
 
 It's built on the macOS Accessibility API, works on multiple monitors, and works while a non-Latin input method (such as Pinyin) is active.
 
@@ -64,9 +67,26 @@ After granting Screen Recording, quit and reopen KeyNav from the menu bar icon.
 | Action | What it does |
 |---|---|
 | Type a label | Switch to that window |
-| Scroll the mouse wheel | Move a highlight through the labels, looping at either end |
-| Middle click or `Return` | Switch to the highlighted window |
-| **Hold the middle button** (~0.4 s) | Open window mode with the mouse. A quick middle click still works as usual. |
+| `Return` | Switch to the window highlighted with the mouse wheel (see below) |
+
+### Mouse
+
+You can switch windows with the mouse alone:
+
+1. **Hold the middle button** (the wheel button) for about 0.4 s. The window picker opens, and you can let go.
+2. **Scroll the wheel** to move a highlight from label to label, looping at either end. The highlighted label gets bigger with inverted colors, and its window (or thumbnail) gets an outline. On a trackpad, two-finger scroll; one step is about 40 points of scrolling.
+3. **Middle-click** to switch to the highlighted window.
+
+| Mouse action | When | What it does |
+|---|---|---|
+| Hold middle button ~0.4 s | Any time | Opens window mode |
+| Quick middle click | Any time | Works as usual (for example, opens a link in a new tab), just a moment later |
+| Middle-button drag | Any time | Works as usual (for example, panning) |
+| Scroll | Window mode | Moves the highlight. The app underneath doesn't scroll. |
+| Middle click | Window mode | Switches to the highlighted window |
+| Left or right click | Either mode | Closes the labels. The click still reaches the app. |
+
+The labels never take focus or catch the mouse. Clicks go through them, and buttons that only show on hover stay visible under the labels. To turn the middle-button gesture off, go to **Settings → General → Hold the middle mouse button to show windows**.
 
 ### Element mode: `⌥F`
 
