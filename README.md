@@ -92,6 +92,8 @@ The labels never take focus or catch the mouse. Clicks go through them, and butt
 
 ### Element mode: `⌥F`
 
+![Element mode on a GitHub page: every button, link, tab and file row has a one- or two-letter label](docs/demo-elements.png)
+
 | Action | What it does |
 |---|---|
 | Type a label | Click that control (text fields get keyboard focus instead) |
