@@ -1,5 +1,7 @@
 # KeyNav
 
+![KeyNav window mode across three monitors: visible windows get a letter label; hidden and minimized windows appear as labeled thumbnails on the main screen](docs/demo.png)
+
 Keyboard (and mouse) navigation for macOS windows and controls.
 
 KeyNav is a small menu bar app. Press a shortcut and every window on the current Space gets a big letter label. Type the letter to jump to that window. Press another shortcut and every clickable control in the active window gets a label. Type it to click.
