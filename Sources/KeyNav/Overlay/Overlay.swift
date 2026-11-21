@@ -44,7 +44,6 @@ struct StripCard {
 
 @MainActor
 final class OverlayController {
-    var onCancel: (() -> Void)?
 
     private var panels: [(screen: NSScreen, panel: OverlayPanel)] = []
     private var hudPanel: NSPanel?
@@ -53,6 +52,9 @@ final class OverlayController {
     private(set) var stripBackground: CGRect?
     private(set) var prefix = ""
     private(set) var style: OverlayStyle?
+    /// Label picked with the scroll wheel, and the frame of its window when labeled in place.
+    private(set) var highlight: String?
+    private(set) var highlightFrame: CGRect?
 
     init() { rebuildPanels() }
 
@@ -78,6 +80,8 @@ final class OverlayController {
               cards newCards: [StripCard], style: OverlayStyle) {
         self.style = style
         prefix = ""
+        highlight = nil
+        highlightFrame = nil
         badges = layoutWindowBadges(windowBadges, style: style) + layoutElementBadges(elementBadges, style: style)
         cards = newCards
         layoutStrip(style: style)
@@ -85,6 +89,12 @@ final class OverlayController {
             panel.contentView?.needsDisplay = true
             panel.orderFrontRegardless()
         }
+    }
+
+    func setHighlight(_ label: String?, frame: CGRect?) {
+        highlight = label
+        highlightFrame = frame
+        redraw()
     }
 
     func update(prefix: String) {
@@ -98,7 +108,13 @@ final class OverlayController {
         redraw()
     }
 
+    /// Temporarily hide the labels so the controls underneath can be seen.
+    func setPeek(_ peeking: Bool) {
+        panels.forEach { $0.panel.alphaValue = peeking ? 0 : 1 }
+    }
+
     func hide() {
+        setPeek(false)
         panels.forEach { $0.panel.orderOut(nil) }
         badges = []
         cards = []
@@ -168,19 +184,57 @@ final class OverlayController {
     }
 
     private func layoutElementBadges(_ items: [(String, CGRect)], style: OverlayStyle) -> [Badge] {
+        let screens = ScreenGeometry.allScreensCG
+        let frames = items.map(\.1)
         var placed: [CGRect] = []
-        return items.map { label, frame in
+        return items.enumerated().map { index, item in
+            let (label, frame) = item
             let size = Self.badgeSize(label, fontSize: style.elementFontSize)
-            var rect = CGRect(x: frame.minX + 2, y: frame.minY + 2, width: size.width, height: size.height)
-            if rect.maxY > frame.maxY + size.height / 2 { rect.origin.y = frame.midY - size.height / 2 }
-            var tries = 0
-            while placed.contains(where: { $0.intersects(rect) }), tries < 3 {
-                rect.origin.x += size.width + 2
-                tries += 1
-            }
+            let rect = Self.elementBadgeRect(index: index, frame: frame, size: size, frames: frames,
+                                             placed: placed, screens: screens)
             placed.append(rect)
             return Badge(label: label, kind: .element, rect: rect, outline: style.showOutlines ? frame : nil)
         }
+    }
+
+    /// Small controls (icons) get the badge beside them so the icon stays readable; it goes on the
+    /// first side that covers no other labeled control. Large controls get it inside the top-left corner.
+    nonisolated static func elementBadgeRect(index: Int, frame: CGRect, size: CGSize, frames: [CGRect],
+                                 placed: [CGRect], screens: [CGRect]) -> CGRect {
+        let inside = CGRect(x: frame.minX + 2, y: frame.minY + 2, width: size.width, height: size.height)
+        let isLarge = frame.width >= size.width * 3 && frame.height >= size.height * 1.6
+        if isLarge { return nudge(inside, placed: placed) }
+
+        let gap: CGFloat = 2
+        let candidates = [
+            CGRect(x: frame.minX - size.width - gap, y: frame.midY - size.height / 2, width: size.width, height: size.height),
+            CGRect(x: frame.midX - size.width / 2, y: frame.minY - size.height - gap, width: size.width, height: size.height),
+            CGRect(x: frame.maxX + gap, y: frame.midY - size.height / 2, width: size.width, height: size.height),
+            CGRect(x: frame.midX - size.width / 2, y: frame.maxY + gap, width: size.width, height: size.height),
+        ]
+        for c in candidates {
+            guard screens.contains(where: { $0.contains(c) }) else { continue }
+            if placed.contains(where: { $0.intersects(c) }) { continue }
+            let hitsControl = frames.indices.contains { j in
+                guard j != index else { return false }
+                let other = frames[j]
+                // Containers (a row around this button) don't count as being covered.
+                if other.contains(CGPoint(x: frame.midX, y: frame.midY)) { return false }
+                return other.insetBy(dx: 1, dy: 1).intersects(c)
+            }
+            if !hitsControl { return c }
+        }
+        return nudge(inside, placed: placed)
+    }
+
+    nonisolated private static func nudge(_ start: CGRect, placed: [CGRect]) -> CGRect {
+        var rect = start
+        var tries = 0
+        while placed.contains(where: { $0.intersects(rect) }), tries < 3 {
+            rect.origin.x += rect.width + 2
+            tries += 1
+        }
+        return rect
     }
 
     private func layoutStrip(style: OverlayStyle) {
@@ -240,7 +294,9 @@ final class OverlayPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
-        ignoresMouseEvents = false
+        // Click-through: the app underneath keeps its hover state (hover-only buttons stay visible).
+        // Clicks are noticed by KeyRouter's event tap instead.
+        ignoresMouseEvents = true
         setFrame(screen.frame, display: false)
     }
 
@@ -254,15 +310,21 @@ final class OverlayView: NSView {
     var isMainScreen = false
 
     override var isFlipped: Bool { true }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with event: NSEvent) { controller?.onCancel?() }
-    override func rightMouseDown(with event: NSEvent) { controller?.onCancel?() }
 
     private func local(_ r: CGRect) -> CGRect { r.offsetBy(dx: -screenOrigin.x, dy: -screenOrigin.y) }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let c = controller, let style = c.style else { return }
         let screenRect = CGRect(origin: screenOrigin, size: bounds.size)
+
+        if let frame = c.highlightFrame, screenRect.intersects(frame) {
+            let path = NSBezierPath(roundedRect: local(frame).insetBy(dx: 2, dy: 2), xRadius: 10, yRadius: 10)
+            style.background.withAlphaComponent(0.12).setFill()
+            path.fill()
+            style.background.setStroke()
+            path.lineWidth = 5
+            path.stroke()
+        }
 
         for badge in c.badges where screenRect.intersects(badge.rect) {
             if let outline = badge.outline {
@@ -273,7 +335,8 @@ final class OverlayView: NSView {
             }
             drawBadge(badge.label, in: local(badge.rect),
                       fontSize: badge.kind == .window ? style.windowFontSize : style.elementFontSize,
-                      halo: badge.kind == .window, style: style, prefix: c.prefix)
+                      halo: badge.kind == .window, style: style, prefix: c.prefix,
+                      highlighted: badge.label == c.highlight)
         }
 
         guard isMainScreen, !c.cards.isEmpty else { return }
@@ -283,11 +346,11 @@ final class OverlayView: NSView {
         }
         let stripFont = max(18, style.windowFontSize * 0.6)
         for card in c.cards {
-            drawCard(card, style: style, prefix: c.prefix, badgeFont: stripFont)
+            drawCard(card, style: style, prefix: c.prefix, badgeFont: stripFont, highlighted: card.label == c.highlight)
         }
     }
 
-    private func drawCard(_ card: StripCard, style: OverlayStyle, prefix: String, badgeFont: CGFloat) {
+    private func drawCard(_ card: StripCard, style: OverlayStyle, prefix: String, badgeFont: CGFloat, highlighted: Bool) {
         let rect = local(card.rect)
         let dim = !card.label.hasPrefix(prefix)
         NSGraphicsContext.saveGraphicsState()
@@ -327,10 +390,23 @@ final class OverlayView: NSView {
         // Badge centered on the bottom edge.
         let size = OverlayController.badgeSize(card.label, fontSize: badgeFont)
         let badgeRect = CGRect(x: rect.midX - size.width / 2, y: rect.maxY - size.height / 2, width: size.width, height: size.height)
-        drawBadge(card.label, in: badgeRect, fontSize: badgeFont, halo: false, style: style, prefix: prefix)
+        if highlighted {
+            let ring = NSBezierPath(roundedRect: rect.insetBy(dx: -3, dy: -3), xRadius: 12, yRadius: 12)
+            style.background.setStroke()
+            ring.lineWidth = 4
+            ring.stroke()
+        }
+        drawBadge(card.label, in: badgeRect, fontSize: badgeFont, halo: false, style: style, prefix: prefix,
+                  highlighted: highlighted)
     }
 
-    private func drawBadge(_ label: String, in rect: CGRect, fontSize: CGFloat, halo: Bool, style: OverlayStyle, prefix: String) {
+    private func drawBadge(_ label: String, in rect: CGRect, fontSize: CGFloat, halo: Bool, style: OverlayStyle,
+                           prefix: String, highlighted: Bool = false) {
+        // Highlighted: 20% larger with inverted colors.
+        let rect = highlighted ? rect.insetBy(dx: -rect.width * 0.1, dy: -rect.height * 0.1) : rect
+        let fontSize = highlighted ? fontSize * 1.2 : fontSize
+        let fill = highlighted ? style.text : style.background
+        let ink = highlighted ? style.background : style.text
         let matches = label.hasPrefix(prefix)
         let typed = matches ? prefix.count : 0
         let text = label.uppercased()
@@ -347,16 +423,16 @@ final class OverlayView: NSView {
         shadow.set()
 
         let path = NSBezierPath(roundedRect: rect, xRadius: rect.height * 0.25, yRadius: rect.height * 0.25)
-        style.background.setFill()
+        fill.setFill()
         path.fill()
         NSShadow().set()
         style.border.setStroke()
         path.lineWidth = 1
         path.stroke()
 
-        let attr = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: style.text])
+        let attr = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: ink])
         if typed > 0 {
-            attr.addAttribute(.foregroundColor, value: style.text.withAlphaComponent(0.35), range: NSRange(location: 0, length: typed))
+            attr.addAttribute(.foregroundColor, value: ink.withAlphaComponent(0.35), range: NSRange(location: 0, length: typed))
         }
         let s = attr.size()
         attr.draw(at: CGPoint(x: rect.midX - s.width / 2, y: rect.midY - s.height / 2))

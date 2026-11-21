@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] _ in DispatchQueue.main.async { self?.applyHotkeys() } }
             .store(in: &cancellables)
 
+        store.$settings.map(\.middleLongPress).removeDuplicates().sink { [weak self] on in
+            self?.coordinator.router.middleLongPressEnabled = on
+        }.store(in: &cancellables)
+
         store.$settings.map(\.snapshotCache).removeDuplicates().sink { [weak self] on in
             if !on { self?.coordinator.thumbnails.clear() }
         }.store(in: &cancellables)

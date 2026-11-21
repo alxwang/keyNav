@@ -55,7 +55,8 @@ struct GeneralTab: View {
                 HotkeyRecorder(title: "Show windows", hotkey: $store.settings.windowHotkey, ui: ui)
                 HotkeyRecorder(title: "Label elements", hotkey: $store.settings.elementHotkey, ui: ui)
                 ForEach(ui.hotkeyErrors, id: \.self) { Text($0).font(.callout).foregroundStyle(.red) }
-                Text("While labels are shown: type a label to pick it, ⌫ to undo a letter, Esc to cancel. In element mode hold ⇧ on the last letter for right-click, ⌘ for ⌘-click, ⌥ to keep labeling after the click.")
+                Toggle("Hold the middle mouse button to show windows", isOn: $store.settings.middleLongPress)
+                Text("While labels are shown: type a label to pick it, ⌫ to undo a letter, Esc to cancel, hold Space to peek. In window mode, scroll to highlight a window and middle-click (or Return) to open it. In element mode Tab switches between important and all controls; hold ⇧ on the last letter for right-click, ⌘ for ⌘-click, ⌥ to keep labeling after the click.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("Labels") {
@@ -226,6 +227,7 @@ struct BehaviorTab: View {
                 }
             }
             Section("Element labels: options") {
+                Toggle("Label only important controls first (Tab shows all)", isOn: $store.settings.smartElements)
                 Toggle("Label disabled controls", isOn: $store.settings.showDisabled)
                 Toggle("Outline labeled controls", isOn: $store.settings.showOutlines)
                 Toggle("Leave cursor on the clicked control", isOn: $store.settings.leaveCursorOnClicked)

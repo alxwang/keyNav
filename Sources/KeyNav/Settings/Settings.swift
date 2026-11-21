@@ -90,6 +90,8 @@ struct Settings: Codable, Equatable {
     var elementHotkey = Hotkey.defaultElement
     var alphabet = LabelGenerator.defaultAlphabet
     var paused = false
+    /// Hold the middle mouse button to open the window picker.
+    var middleLongPress = true
 
     // Appearance
     var windowFontSize: Double = 48
@@ -105,6 +107,8 @@ struct Settings: Codable, Equatable {
     var fallbackFirstTextField = true
     var roleCategories: Set<RoleCategory> = Set(RoleCategory.allCases).subtracting([.pressable])
     var showDisabled = false
+    /// Label only important controls first; Tab switches to all.
+    var smartElements = true
     var showOutlines = false
     var maxElements = 300
     var leaveCursorOnClicked = false
@@ -143,6 +147,7 @@ extension Settings {
         elementHotkey = v(.elementHotkey, elementHotkey)
         alphabet = v(.alphabet, alphabet)
         paused = v(.paused, paused)
+        middleLongPress = v(.middleLongPress, middleLongPress)
         windowFontSize = v(.windowFontSize, windowFontSize)
         elementFontSize = v(.elementFontSize, elementFontSize)
         badgeBackground = v(.badgeBackground, badgeBackground)
@@ -154,6 +159,7 @@ extension Settings {
         fallbackFirstTextField = v(.fallbackFirstTextField, fallbackFirstTextField)
         roleCategories = v(.roleCategories, roleCategories)
         showDisabled = v(.showDisabled, showDisabled)
+        smartElements = v(.smartElements, smartElements)
         showOutlines = v(.showOutlines, showOutlines)
         maxElements = v(.maxElements, maxElements)
         leaveCursorOnClicked = v(.leaveCursorOnClicked, leaveCursorOnClicked)

@@ -7,10 +7,19 @@ struct ElementInfo {
     /// Visible portion of the element, global CG coordinates.
     let frame: CGRect
     let category: RoleCategory
+    /// Has a title, description or help text.
+    var hasName = true
+    /// Link target, used to collapse duplicate links.
+    var url: String? = nil
+    /// Index (in scan order) of the nearest labelable ancestor, if any.
+    var ancestor: Int? = nil
 }
 
 struct ElementScanResult {
+    /// Everything found.
     var elements: [ElementInfo]
+    /// The "important" subset shown first.
+    var important: [ElementInfo]
     var windowFrame: CGRect
     var truncated: Int
 }
@@ -82,11 +91,12 @@ final class ElementScanner: @unchecked Sendable {
         guard let window = app.element("AXFocusedWindow") ?? app.element("AXMainWindow"),
               let windowFrame = window.frame else { return nil }
 
-        let attrs = ["AXRole", "AXSubrole", "AXPosition", "AXSize", "AXEnabled", "AXChildren"]
+        let attrs = ["AXRole", "AXSubrole", "AXPosition", "AXSize", "AXEnabled", "AXChildren",
+                     "AXTitle", "AXDescription", "AXHelp"]
         let deadline = Date().addingTimeInterval(Self.timeBudget)
 
-        struct Node { let el: AXUIElement; let depth: Int; let clip: CGRect }
-        var stack = [Node(el: window, depth: 0, clip: windowFrame)]
+        struct Node { let el: AXUIElement; let depth: Int; let clip: CGRect; let ancestor: Int? }
+        var stack = [Node(el: window, depth: 0, clip: windowFrame, ancestor: nil)]
         var found: [ElementInfo] = []
         var nodes = 0
 
@@ -104,6 +114,7 @@ final class ElementScanner: @unchecked Sendable {
             }
 
             var clip = n.clip
+            var ancestor = n.ancestor
             if let f = frame {
                 if n.depth > 0 && !f.intersects(clip) { continue }
                 if Self.clipRoles.contains(role) { clip = clip.intersection(f) }
@@ -115,7 +126,11 @@ final class ElementScanner: @unchecked Sendable {
                 let visible = f.intersection(clip)
                 if !visible.isNull, visible.width >= 6, visible.height >= 6,
                    screens.contains(where: { $0.contains(visible.center) }) {
-                    found.append(ElementInfo(ax: n.el, role: role, subrole: subrole, frame: visible, category: category))
+                    let named = [v[6], v[7], v[8]].contains { ($0 as? String).map { !$0.isEmpty } ?? false }
+                    let url = role == "AXLink" ? (n.el.value("AXURL") as? URL)?.absoluteString : nil
+                    found.append(ElementInfo(ax: n.el, role: role, subrole: subrole, frame: visible, category: category,
+                                             hasName: named, url: url, ancestor: n.ancestor))
+                    ancestor = found.count - 1
                 }
             }
 
@@ -127,18 +142,61 @@ final class ElementScanner: @unchecked Sendable {
                     kids = rows + kids.filter { let r = $0.role; return r != "AXRow" && r != "AXColumn" }
                 }
             }
-            for k in kids.reversed() { stack.append(Node(el: k, depth: n.depth + 1, clip: clip)) }
+            for k in kids.reversed() { stack.append(Node(el: k, depth: n.depth + 1, clip: clip, ancestor: ancestor)) }
         }
 
-        var elements = Self.dedupe(found)
-        var truncated = 0
-        if elements.count > settings.maxElements {
-            let c = windowFrame.center
-            elements.sort { hypot($0.frame.midX - c.x, $0.frame.midY - c.y) < hypot($1.frame.midX - c.x, $1.frame.midY - c.y) }
-            truncated = elements.count - settings.maxElements
-            elements = Array(elements.prefix(settings.maxElements))
+        let all = Self.limit(Self.dedupe(found), to: settings.maxElements, around: windowFrame.center)
+        let important = Self.limit(Self.dedupe(Self.important(found, badgeSize: settings.elementFontSize * 1.6)),
+                                   to: settings.maxElements, around: windowFrame.center)
+        return ElementScanResult(elements: Self.readingOrder(all.items), important: Self.readingOrder(important.items),
+                                 windowFrame: windowFrame, truncated: all.dropped)
+    }
+
+    /// Keeps the `max` elements closest to `center`.
+    static func limit(_ items: [ElementInfo], to max: Int, around center: CGPoint) -> (items: [ElementInfo], dropped: Int) {
+        guard items.count > max else { return (items, 0) }
+        let sorted = items.sorted {
+            hypot($0.frame.midX - center.x, $0.frame.midY - center.y) < hypot($1.frame.midX - center.x, $1.frame.midY - center.y)
         }
-        return ElementScanResult(elements: Self.readingOrder(elements), windowFrame: windowFrame, truncated: truncated)
+        return (Array(sorted.prefix(max)), items.count - max)
+    }
+
+    /// The subset worth labeling by default. `items` must be in scan order (ancestor indices refer to it).
+    static func important(_ items: [ElementInfo], badgeSize: CGFloat) -> [ElementInfo] {
+        let containers: Set<RoleCategory> = [.rows, .links, .buttons, .pressable]
+        var seenURLs = Set<String>()
+        var kept: [ElementInfo] = []
+        // True when the element is labeled, or sits inside a labeled container.
+        var covers = [Bool](repeating: false, count: items.count)
+        for (i, item) in items.enumerated() {
+            // 1. Something inside a labeled row / link / button: clicking the container is enough.
+            if let a = item.ancestor, a < i, covers[a], containers.contains(items[a].category) { covers[i] = true; continue }
+            // 2. Cells duplicate their row; bare pressable groups are mostly noise.
+            if item.role == "AXCell" || item.category == .pressable { continue }
+            // 3. Unnamed buttons / links are usually decoration or wrappers.
+            if (item.category == .buttons && item.role == "AXButton" || item.category == .links), !item.hasName { continue }
+            // 4. Many links to the same place (thumbnail + title + "read more").
+            if let url = item.url, !url.isEmpty, !seenURLs.insert(url).inserted { continue }
+            covers[i] = true
+            kept.append(item)
+        }
+        // 5. Labels that would sit on top of each other: keep the stronger, then larger, control.
+        let half = badgeSize / 2
+        let order = kept.indices.sorted {
+            let a = kept[$0], b = kept[$1]
+            if rank(a.category) != rank(b.category) { return rank(a.category) > rank(b.category) }
+            return a.frame.width * a.frame.height > b.frame.width * b.frame.height
+        }
+        var anchors: [CGRect] = []
+        var keep = Set<Int>()
+        for i in order {
+            let f = kept[i].frame
+            let anchor = CGRect(x: f.minX, y: f.minY, width: half, height: half)
+            if anchors.contains(where: { $0.intersects(anchor) }) { continue }
+            anchors.append(anchor)
+            keep.insert(i)
+        }
+        return kept.indices.filter { keep.contains($0) }.map { kept[$0] }
     }
 
     private func category(role: String, subrole: String?, element: AXUIElement, settings: Settings) -> RoleCategory? {

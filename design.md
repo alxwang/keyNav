@@ -21,7 +21,7 @@ A macOS menu-bar utility for keyboard-only navigation, built on the Accessibilit
 | Click types | Left click by default. If **Shift** is held on the final label key → right click. If **⌘** is held → ⌘-click. Text inputs receive focus instead of a click. |
 | Click method | `AXPress` first, synthetic `CGEvent` mouse click as fallback (always used for right-click and ⌘-click). |
 | Chaining | Element mode closes after a click. If **⌥** is still held, it rescans and relabels to allow consecutive clicks. |
-| Overlay keys | `Esc` cancels; `Backspace` removes the last typed char; non-matching labels dim; clicking anywhere or pressing the hotkey again cancels. |
+| Overlay keys | `Esc` cancels; `Backspace` removes the last typed char; non-matching labels dim; clicking anywhere or pressing the hotkey again cancels (the click still reaches the app). Hold `Space` to peek under labels; `Tab` toggles important/all element labels. **Window mode mouse**: the scroll wheel moves a highlight through the labels in label order, looping (only labels matching the typed prefix); the highlighted label is inverted and its window or thumbnail is outlined. The **middle button** or `Return` activates the highlighted window. **Opening by mouse**: holding the middle button for 0.4 s (setting *Hold the middle mouse button to show windows*, on by default) opens window mode; KeyNav's tap holds back the press, and if it is released early or dragged more than 6 pt, the press is replayed to the app as a normal middle click / drag (replayed events are tagged via `eventSourceUserData` so the tap ignores them). Scrolls and the middle click are swallowed while window mode is shown; in element mode scrolling passes through. The overlay is click-through, so the target app keeps focus *and* hover state (hover-only buttons stay visible); clicks are detected by the event tap. |
 | Default hotkeys | `⌥Space` (windows), `⌥F` (elements); re-recordable in Settings. |
 | Thumbnails | Live ScreenCaptureKit capture for covered windows; in-memory snapshot cache for minimized/hidden; app icon + title as last fallback. |
 | Stack | Swift 6 toolchain (Swift 5 language mode), SwiftPM package + `build.sh` bundler, macOS 14+, AppKit overlays, SwiftUI settings, ScreenCaptureKit, SMAppService. No third-party dependencies. |
@@ -297,9 +297,20 @@ Steps 2 and 3 can each be disabled in Settings (*Restore last focus*, *Fallback 
 
 **Cap**: if there are more than *Max elements* (default 300), keep the ones closest to the window center and show "+N more" in a HUD.
 
+**Smart subset** (setting *Label only important controls first*, on by default): the scan produces both the full list and an "important" list. **Tab** switches between the two without rescanning. The important list drops:
+1. Elements inside a labeled row, link or button (clicking the container is enough).
+2. `AXCell`s and "pressable" groups.
+3. `AXButton`s and links with no title, description or help.
+4. Links whose `AXURL` was already seen.
+5. Labels whose top-left anchors would collide; the higher-ranked, then larger, control wins.
+
+A HUD shows "N of M · Tab shows all".
+
 ### 7.2 Element Labels
 
-- Badge placed at the element's **top-left corner**, inset 2 pt, clamped to the window and screen. Badges that would overlap are nudged with a simple greedy pass.
+- **Small controls** (smaller than 3× the badge width or 1.6× its height, e.g. icon buttons) get the badge *beside* them, so the icon stays readable. The badge goes on the first side (left, above, right, below) that is on screen and covers no other labeled control or badge. Containers around the control (such as its row) don't count.
+- **Large controls** (text fields, rows) get the badge inside the **top-left corner**, inset 2 pt; overlapping badges are nudged right.
+- **Peek**: hold **Space** to hide all labels (in both modes); release it to show them again.
 - Smaller default font than window labels (default 14 pt bold vs. 48 pt for windows), both configurable.
 - An optional thin outline around each element's frame (*Show element outlines*, off by default).
 

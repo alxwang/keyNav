@@ -8,6 +8,10 @@ import Carbon
 enum KeyLayout {
     static let escape: UInt16 = 53
     static let backspace: UInt16 = 51
+    static let tab: UInt16 = 48
+    static let space: UInt16 = 49
+    static let returnKey: UInt16 = 36
+    static let keypadEnter: UInt16 = 76
 
     private static let ansiFallback: [UInt16: Character] = [
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v",

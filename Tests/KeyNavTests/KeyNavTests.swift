@@ -113,3 +113,83 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(Hotkey.defaultWindow.displayString, "⌥Space")
     }
 }
+
+final class ImportantElementTests: XCTestCase {
+    private func el(_ role: String, _ c: RoleCategory, _ frame: CGRect, named: Bool = true,
+                    url: String? = nil, ancestor: Int? = nil) -> ElementInfo {
+        ElementInfo(ax: AXUIElementCreateSystemWide(), role: role, subrole: nil, frame: frame, category: c,
+                    hasName: named, url: url, ancestor: ancestor)
+    }
+
+    func testChildrenOfRowsAndLinksAreHidden() {
+        let items = [
+            el("AXRow", .rows, CGRect(x: 0, y: 0, width: 400, height: 24)),
+            el("AXCell", .rows, CGRect(x: 0, y: 0, width: 200, height: 24), ancestor: 0),
+            el("AXButton", .buttons, CGRect(x: 360, y: 2, width: 20, height: 20), ancestor: 0),
+            el("AXLink", .links, CGRect(x: 0, y: 100, width: 200, height: 20)),
+            el("AXButton", .buttons, CGRect(x: 300, y: 100, width: 40, height: 20)),
+        ]
+        let roles = ElementScanner.important(items, badgeSize: 22).map(\.role)
+        XCTAssertEqual(roles, ["AXRow", "AXLink", "AXButton"])
+    }
+
+    func testUnnamedAndDuplicateLinksAreHidden() {
+        let items = [
+            el("AXLink", .links, CGRect(x: 0, y: 0, width: 100, height: 20), url: "https://a"),
+            el("AXLink", .links, CGRect(x: 0, y: 50, width: 100, height: 20), url: "https://a"),
+            el("AXLink", .links, CGRect(x: 0, y: 100, width: 100, height: 20), named: false, url: "https://b"),
+            el("AXTextField", .textInputs, CGRect(x: 0, y: 150, width: 100, height: 20), named: false),
+        ]
+        XCTAssertEqual(ElementScanner.important(items, badgeSize: 22).map(\.frame.minY), [0, 150])
+    }
+
+    func testNamedChildOfUnnamedWrapperIsKept() {
+        let items = [
+            el("AXLink", .links, CGRect(x: 0, y: 0, width: 100, height: 40), named: false),
+            el("AXButton", .buttons, CGRect(x: 10, y: 10, width: 60, height: 20), ancestor: 0),
+        ]
+        XCTAssertEqual(ElementScanner.important(items, badgeSize: 22).map(\.role), ["AXButton"])
+    }
+
+    func testCollidingLabelsKeepStrongerControl() {
+        let items = [
+            el("AXRow", .rows, CGRect(x: 0, y: 0, width: 400, height: 24)),
+            el("AXTextField", .textInputs, CGRect(x: 2, y: 2, width: 200, height: 20)),
+        ]
+        XCTAssertEqual(ElementScanner.important(items, badgeSize: 22).map(\.role), ["AXTextField"])
+    }
+}
+
+final class BadgePlacementTests: XCTestCase {
+    let screens = [CGRect(x: 0, y: 0, width: 2000, height: 1200)]
+    let size = CGSize(width: 20, height: 20)
+
+    func testSmallControlGetsBadgeOnTheLeft() {
+        let icon = CGRect(x: 100, y: 100, width: 24, height: 24)
+        let r = OverlayController.elementBadgeRect(index: 0, frame: icon, size: size, frames: [icon], placed: [], screens: screens)
+        XCTAssertFalse(r.intersects(icon))
+        XCTAssertLessThan(r.maxX, icon.minX + 0.1)
+    }
+
+    func testToolbarNeighborPushesBadgeAbove() {
+        let left = CGRect(x: 70, y: 100, width: 24, height: 24)
+        let icon = CGRect(x: 100, y: 100, width: 24, height: 24)
+        let r = OverlayController.elementBadgeRect(index: 1, frame: icon, size: size, frames: [left, icon], placed: [], screens: screens)
+        XCTAssertFalse(r.intersects(icon))
+        XCTAssertFalse(r.intersects(left))
+        XCTAssertLessThan(r.maxY, icon.minY + 0.1)
+    }
+
+    func testContainerDoesNotBlock() {
+        let row = CGRect(x: 0, y: 90, width: 400, height: 44)
+        let icon = CGRect(x: 100, y: 100, width: 24, height: 24)
+        let r = OverlayController.elementBadgeRect(index: 1, frame: icon, size: size, frames: [row, icon], placed: [], screens: screens)
+        XCTAssertLessThan(r.maxX, icon.minX + 0.1)
+    }
+
+    func testLargeControlGetsBadgeInside() {
+        let field = CGRect(x: 100, y: 100, width: 300, height: 40)
+        let r = OverlayController.elementBadgeRect(index: 0, frame: field, size: size, frames: [field], placed: [], screens: screens)
+        XCTAssertTrue(field.contains(r))
+    }
+}

@@ -14,6 +14,11 @@ final class ModeCoordinator {
     private var token = 0
     private var lastToggle = Date.distantPast
     private var elementPID: pid_t = 0
+    private var elementResult: ElementScanResult?
+    private var showingAllElements = false
+    /// Window mode: label highlighted by the scroll wheel, and frames of windows labeled in place.
+    private var highlighted: String?
+    private var windowFrames: [String: CGRect] = [:]
 
     let overlay = OverlayController()
     let router = KeyRouter()
@@ -34,7 +39,11 @@ final class ModeCoordinator {
         thumbnails = ThumbnailService(store: store)
         windowActivator = WindowActivator(focus: FocusResolver(tracker: focusTracker))
         router.onKeyDown = { [weak self] code, flags in self?.handleKey(code: code, flags: flags) ?? false }
-        overlay.onCancel = { [weak self] in self?.cancel() }
+        router.onKeyUp = { [weak self] code in
+            if code == KeyLayout.space { self?.overlay.setPeek(false) }
+        }
+        router.onMouseDown = { [weak self] type, button in self?.handleMouseDown(type: type, button: button) ?? false }
+        router.onScroll = { [weak self] steps in self?.handleScroll(steps) ?? false }
     }
 
     // MARK: Entry points
@@ -119,6 +128,9 @@ final class ModeCoordinator {
         targets = [:]
         labels = []
         prefix = ""
+        elementResult = nil
+        highlighted = nil
+        windowFrames = [:]
         if wasElements { scheduleEnhancedUIReset() }
     }
 
@@ -173,6 +185,7 @@ final class ModeCoordinator {
             targets[label] = .window(w)
             if let point {
                 windowBadges.append((label, point))
+                windowFrames[label] = w.frame
             } else {
                 let icon = NSRunningApplication(processIdentifier: w.pid)?.icon
                 let aspect = w.frame.height > 0 ? w.frame.width / w.frame.height : 1.5
@@ -196,14 +209,73 @@ final class ModeCoordinator {
             overlay.flashHUD("No clickable elements")
             return
         }
-        labels = LabelGenerator.labels(count: result.elements.count, alphabet: settings.alphabet)
+        elementResult = result
+        let hasSmaller = settings.smartElements && !result.important.isEmpty && result.important.count < result.elements.count
+        showingAllElements = !hasSmaller
+        showElementLabels(settings: settings, announce: true)
+    }
+
+    private func showElementLabels(settings: Settings, announce: Bool) {
+        guard let result = elementResult else { return }
+        let items = showingAllElements ? result.elements : result.important
+        targets = [:]
+        prefix = ""
+        labels = LabelGenerator.labels(count: items.count, alphabet: settings.alphabet)
         var badges: [(String, CGRect)] = []
-        for (label, el) in zip(labels, result.elements) {
+        for (label, el) in zip(labels, items) {
             targets[label] = .element(el)
             badges.append((label, el.frame))
         }
         overlay.show(windowBadges: [], elementBadges: badges, cards: [], style: OverlayStyle(settings))
-        if result.truncated > 0 { overlay.flashHUD("+\(result.truncated) more elements not labeled") }
+        if !showingAllElements {
+            if announce { overlay.flashHUD("\(items.count) of \(result.elements.count) · Tab shows all") }
+        } else if !announce {
+            overlay.flashHUD("All \(items.count) elements")
+        }
+        if showingAllElements, result.truncated > 0 { overlay.flashHUD("+\(result.truncated) more elements not labeled") }
+    }
+
+    /// Tab in element mode: switch between important and all labels.
+    private func toggleElementDetail() {
+        guard let result = elementResult, result.important.count < result.elements.count, !result.important.isEmpty else { return }
+        showingAllElements.toggle()
+        showElementLabels(settings: store.settings, announce: false)
+    }
+
+    // MARK: Mouse
+
+    /// Window mode: middle button activates the highlighted window. Any other click cancels and
+    /// goes through to the app.
+    private func handleMouseDown(type: CGEventType, button: Int64) -> Bool {
+        if mode == .windows, type == .otherMouseDown, button == 2 {
+            if let label = highlighted, let target = targets[label] {
+                DispatchQueue.main.async { [weak self] in self?.fire(target, flags: []) }
+            }
+            return true
+        }
+        DispatchQueue.main.async { [weak self] in self?.cancel("mouse click") }
+        return false
+    }
+
+    /// Window mode: the wheel moves the highlight through the (matching) labels, looping.
+    private func handleScroll(_ steps: Int) -> Bool {
+        guard mode == .windows else { return false }
+        if steps != 0 { moveHighlight(by: steps) }
+        return true
+    }
+
+    private func moveHighlight(by steps: Int) {
+        let candidates = labels.filter { $0.hasPrefix(prefix) }
+        guard !candidates.isEmpty else { return }
+        let n = candidates.count
+        let next: Int
+        if let h = highlighted, let i = candidates.firstIndex(of: h) {
+            next = ((i + steps) % n + n) % n
+        } else {
+            next = steps > 0 ? (steps - 1) % n : ((n + steps) % n + n) % n
+        }
+        highlighted = candidates[next]
+        overlay.setHighlight(candidates[next], frame: windowFrames[candidates[next]])
     }
 
     // MARK: Keys
@@ -212,6 +284,11 @@ final class ModeCoordinator {
     private func handleKey(code: UInt16, flags: CGEventFlags) -> Bool {
         guard mode != .idle else { return false }
         if code == KeyLayout.escape { cancel(); return true }
+        if mode == .windows, code == KeyLayout.returnKey || code == KeyLayout.keypadEnter,
+           let label = highlighted, let target = targets[label] {
+            fire(target, flags: [])
+            return true
+        }
         if code == KeyLayout.backspace {
             if !prefix.isEmpty { prefix.removeLast(); overlay.update(prefix: prefix) }
             return true
@@ -222,6 +299,15 @@ final class ModeCoordinator {
 
         if !isLabelKey {
             let s = store.settings
+            let mods: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+            if code == KeyLayout.space, flags.intersection(mods).isEmpty {
+                overlay.setPeek(true)   // hold Space to see under the labels
+                return true
+            }
+            if code == KeyLayout.tab, mode == .elements, flags.intersection(mods).isEmpty {
+                toggleElementDetail()
+                return true
+            }
             if s.windowHotkey.matches(keyCode: code, flags: flags) { toggleWindowMode(); return true }
             if s.elementHotkey.matches(keyCode: code, flags: flags) { toggleElementMode(); return true }
             if flags.contains(.maskCommand) && mode == .windows {
