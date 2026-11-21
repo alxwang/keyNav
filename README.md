@@ -127,6 +127,7 @@ Open **Settings…** from the menu bar icon. You can change:
 - **Shortcut conflicts:** a shortcut you choose replaces the same combination in every app. For example, `⌃Tab` stops switching tabs in browsers and editors.
 - **Chromium and Electron apps** (Chrome, VS Code, Slack and others) are asked to turn on their accessibility tree when you first label them, so the first scan can take a moment.
 - **Other Spaces:** only windows on the current Space are shown.
+- **Screenshots:** `⌘⇧3`, `⌘⇧4` and `⌘⇧5` work while labels are shown, and the labels stay on screen. For 20 seconds afterwards, clicks don't close the labels, so you can select an area. The first `Esc` cancels the screenshot, and a second one closes the labels.
 
 ## How it works
 

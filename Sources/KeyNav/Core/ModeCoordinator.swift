@@ -19,6 +19,11 @@ final class ModeCoordinator {
     /// Window mode: label highlighted by the scroll wheel, and frames of windows labeled in place.
     private var highlighted: String?
     private var windowFrames: [String: CGRect] = [:]
+    /// After a macOS screenshot shortcut, clicks (area selection, the ⌘⇧5 toolbar) don't close the labels.
+    private var screenshotGraceUntil = Date.distantPast
+    private static let screenshotGrace: TimeInterval = 20
+    /// Key codes of 3, 4, 5, 6: ⌘⇧3 / ⌘⇧4 / ⌘⇧5 / ⌘⇧6 (with or without ⌃).
+    private static let screenshotKeys: Set<UInt16> = [20, 21, 23, 22]
 
     let overlay = OverlayController()
     let router = KeyRouter()
@@ -129,6 +134,7 @@ final class ModeCoordinator {
         labels = []
         prefix = ""
         elementResult = nil
+        screenshotGraceUntil = .distantPast
         highlighted = nil
         windowFrames = [:]
         if wasElements { scheduleEnhancedUIReset() }
@@ -253,6 +259,7 @@ final class ModeCoordinator {
             }
             return true
         }
+        if Date() < screenshotGraceUntil { return false }   // selecting a screenshot area
         DispatchQueue.main.async { [weak self] in self?.cancel("mouse click") }
         return false
     }
@@ -283,7 +290,19 @@ final class ModeCoordinator {
     /// Returns true to swallow the key.
     private func handleKey(code: UInt16, flags: CGEventFlags) -> Bool {
         guard mode != .idle else { return false }
-        if code == KeyLayout.escape { cancel(); return true }
+        // macOS screenshot shortcuts go through and leave the labels up, so they can be captured.
+        if flags.contains([.maskCommand, .maskShift]), Self.screenshotKeys.contains(code) {
+            screenshotGraceUntil = Date().addingTimeInterval(Self.screenshotGrace)
+            return false
+        }
+        if code == KeyLayout.escape {
+            if Date() < screenshotGraceUntil {
+                screenshotGraceUntil = .distantPast   // first Esc cancels the screenshot, the next one the labels
+                return false
+            }
+            cancel()
+            return true
+        }
         if mode == .windows, code == KeyLayout.returnKey || code == KeyLayout.keypadEnter,
            let label = highlighted, let target = targets[label] {
             fire(target, flags: [])
